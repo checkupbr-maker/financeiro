@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fluxo Ferreira Nunes</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone@7.18.9/babel.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/@phosphor-icons/web@2.0.3/src/bold/style.css" />
+    <link rel="stylesheet" type="text/css" href="https://unpkg.com/@phosphor-icons/web@2.0.3/src/fill/style.css" />
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+    <script src="https://unpkg.com/xlsx/dist/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        @media print { 
+            .no-print { display: none !important; } 
+            .print-area { width: 100% !important; margin: 0 !important; padding: 0 !important; background: white !important; }
+            body { background: white !important; }
+            .print-table-container { border: none !important; shadow: none !important; }
+        }
+        input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.6; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div id="error-catcher" style="display:none; padding: 30px; background: #fee2e2; color: #991b1b; border: 2px solid #f87171; margin: 30px; border-radius: 20px;">
+        <h3>⚠️ Erro crítico:</h3>
+        <pre id="error-msg" style="background: #ffffff; padding: 15px; overflow-x: auto;"></pre>
+    </div>
+    <script>
+        window.onerror = function(msg, src, ln) {
+            document.getElementById('error-catcher').style.display = 'block';
+            document.getElementById('error-msg').textContent = msg + '\nLinha: ' + ln;
+            return false;
+        };
+    </script>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useMemo, useEffect, useRef } = React;
+        const firebaseConfig = {
+            apiKey: "AIzaSyCE2S-Wv9rME8A0wk7-U_ailhxm1oF4ZdA",
+            authDomain: "financeiro-davina.firebaseapp.com",
+            projectId: "financeiro-davina",
+            storageBucket: "financeiro-davina.firebasestorage.app",
+            messagingSenderId: "1079244429217",
+            appId: "1:1079244429217:web:37f60fabfe021ab3e4dde0"
+        };
+        const currentAppId = 'financeiro-davina';
+        let auth = null; let db = null;
+        try {
+            if (typeof firebase !== 'undefined' && firebaseConfig.apiKey) {
+                if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+                auth = firebase.auth(); db = firebase.firestore();
+            }
+        } catch (err) { console.error(err); }
+        const MONTH_NAMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+        const CATEGORY_LIST = ["Insumos/Dental", "Laboratório", "Impostos/Taxas", "Fixa - Estrutura", "Marketing", "Serviços Terceiros", "Pró-labore", "Outros"];
+        const UmDiaMili = 86400000;
+        const lblCls = "block text-[10px] font-black text-slate-400 uppercase mb-2 ml-2";
+        const inpCls = "w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-black text-slate-800 transition-all";
+        const btnNav = "flex-1 md:flex-none px-6 py-2.5 rounded-xl text-[10px] font-black uppercase transition-all ";
+        const chkCls = "flex items-center gap-4 p-4 rounded-2xl border cursor-pointer transition-all ";
+        const tdCls = "p-6"; const txtBig = "text-2xl font-black text-slate-900 mt-2";
+        const txtRed = "text-2xl font-black text-rose-600 mt-2"; const txtGrn = "text-2xl font-black text-emerald-700 mt-2";
+        const txtWht = "text-2xl font-black mt-2"; const cardBs = "bg-white p-6 rounded-3xl shadow-sm border-l-4 ";
+        const miniCd = "bg-white p-4 rounded-2xl shadow-sm border border-slate-100 flex flex-col justify-center";
+        const mTitle = "text-[9px] font-black uppercase tracking-widest"; const mValue = "text-sm font-black text-slate-900 mt-0.5";
+        
+        const App = () => {
+            const [currentUser, setCurrentUser] = useState(null);
+            const [currentMonthIdx, setCurrentMonthIdx] = useState(new Date().getMonth());
+            const [viewMode, setViewMode] = useState('ALL'); const [rawEntries, setRawEntries] = useState([]);
+            const [isModalOpen, setIsModalOpen] = useState(false); const [editingId, setEditingId] = useState(null);
+            const [sortConfig, setSortConfig] = useState({ key: 'dueDate', direction: 'asc' });
+            const [isLoading, setIsLoading] = useState(true); const [setupError, setSetupError] = useState("");
+            const fileInputRef = useRef(null);
+            const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", totalInstallments: 1, type: "PJ", isCritical: false, isRecurring: false, nature: "Fixa", isDeductible: false });
+            const [suggestions, setSuggestions] = useState([]); const monthName = MONTH_NAMES[currentMonthIdx];
+            const [searchTerm, setSearchTerm] = useState("");
+            const [printPeriod, setPrintPeriod] = useState("MES");
+
+            useEffect(() => {
+                if (!auth) { setSetupError("Erro de carga do Firebase."); setIsLoading(false); return; }
+                auth.signInAnonymously().catch(() => { setSetupError("Erro de login anonimo."); setIsLoading(false); });
+                const unsubscribe = auth.onAuthStateChanged(setCurrentUser); return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (!currentUser || setupError || !db) return;
+                try {
+                    const unsubscribe = db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries').onSnapshot((snapshot) => {
+                        setRawEntries(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))); setIsLoading(false);
+                    }, () => { setSetupError("Erro de leitura."); setIsLoading(false); });
+                    return () => unsubscribe();
+                } catch (err) { setSetupError("Erro de banco."); setIsLoading(false); }
+            }, [currentUser, setupError]);
+
+            const handleProviderChange = (val) => {
+                setFormData(prev => ({ ...prev, provider: val }));
+                if (!val.trim() || rawEntries.length === 0) { setSuggestions([]); return; }
+                const txt = val.toLowerCase().trim(); const matched = []; const seen = new Set();
+                rawEntries.forEach(entry => {
+                    if (!entry.provider) return; const pName = entry.provider.toLowerCase();
+                    if (pName.includes(txt) && !seen.has(pName)) { seen.add(pName); matched.push(entry); }
+                });
+                setSuggestions(matched.slice(0, 5));
+            };
+
+            const selectSuggestion = (entry) => {
+                setFormData(prev => ({ ...prev, provider: entry.provider, description: entry.description || "", amount: entry.amount || "", category: entry.category || "Outros", nature: entry.nature || "Fixa", type: entry.type || "PJ", isDeductible: entry.isDeductible || false }));
+                setSuggestions([]);
+            };
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0]; if (!file) return;
+                setIsLoading(true); const reader = new FileReader();
+                reader.onload = async (evt) => {
+                    try {
+                        const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
+                        const entriesCol = db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries');
+                        
+                        for (let sheetName of wb.SheetNames) {
+                            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { raw: false });
+                            if (rows.length === 0) continue;
+
+                            let validRowsFound = false;
+                            for (let row of rows) {
+                                const getRowVal = (keys) => {
+                                    const foundKey = Object.keys(row).find(k => keys.some(key => k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().includes(key)));
+                                    return foundKey ? row[foundKey] : null;
+                                };
+
+                                let provider = getRowVal(['fornecedor', 'historico', 'beneficiario', 'nome']);
+                                let amountStr = getRowVal(['valor da parcela', 'valor', 'quantia', 'total']);
+                                let dateStr = getRowVal(['data de vencimento', 'vencimento', 'data', 'dia']);
+                                let desc = getRowVal(['descricao', 'detalhe', 'item']) || "Excel";
+                                let pfPj = getRowVal(['pf/pj', 'tipo']) || "PJ";
+                                let nature = getRowVal(['natureza', 'custo']) || "Fixa";
+                                let category = getRowVal(['categoria']) || "Outros";
+                                let statusStr = getRowVal(['status', 'situacao', 'pago', 'data efetiva']) || "Aberto";
+
+                                if (!provider || !amountStr || !dateStr) continue;
+                                validRowsFound = true;
+
+                                let amount = Number(String(amountStr).replace(/[^0-9.-]/g, "").replace(",", "."));
+                                if (isNaN(amount) || amount === 0) { amount = Number(String(amountStr).replace("R$", "").trim().replace(/\./g, "").replace(",", ".")); }
+                                if (isNaN(amount) || amount === 0) continue;
+
+                                let dueDate = new Date().toISOString().split('T')[0];
+                                if (dateStr) {
+                                    if (String(dateStr).includes('/')) {
+                                        const parts = String(dateStr).split('/');
+                                        if (parts.length === 3) {
+                                            let year = parts[2].trim(); if(year.length === 2) year = "20" + year;
+                                            dueDate = year + "-" + parts[1].trim().padStart(2, '0') + "-" + parts[0].trim().padStart(2, '0');
+                                        }
+                                    } else { const d = new Date(dateStr); if (!isNaN(d.getTime())) dueDate = d.toISOString().split('T')[0]; }
+                                }
+
+                                let cleanType = String(pfPj).toUpperCase().includes("PF") ? "PF" : "PJ";
+                                let cleanNature = (String(nature).includes("Var") || String(nature).includes("var")) ? "Variável" : "Fixa";
+                                let cleanCategory = CATEGORY_LIST.includes(category) ? category : "Outros";
+                                
+                                const nStatus = String(statusStr).toLowerCase().normalize("NFD").trim();
+                                let isPaid = (nStatus !== "" && nStatus !== "aberto" && nStatus !== "-");
+
+                                await entriesCol.add({ provider: String(provider).trim(), description: String(desc).trim(), amount: Math.abs(amount), dueDate: dueDate, category: cleanCategory, nature: cleanNature, type: cleanType, paymentDate: isPaid ? dueDate : "", paidAmount: isPaid ? Math.abs(amount) : 0, installment: 1, totalInstallments: 1, isCritical: false, isDeductible: false, createdAt: new Date().toISOString() });
+                            }
+                            
+                            if (!validRowsFound) {
+                                alert("Grelha incompatível. Certifique-se de usar colunas como 'Fornecedor', 'Valor' e 'Vencimento'.");
+                            }
+                        }
+                    } catch (error) { alert("Erro de processamento no arquivo."); }
+                    setIsLoading(false); e.target.value = null;
+                };
+                reader.readAsBinaryString(file);
+            };
+
+            const filteredEntries = useMemo(() => {
+                const today = new Date(); today.setHours(0,0,0,0);
+                const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + 7);
+                return rawEntries.filter(entry => {
+                    if (!entry.dueDate) return false;
+                    const dDate = new Date(entry.dueDate + "T00:00:00");
+                    const matchesType = (viewMode === 'ALL' || entry.type === viewMode);
+                    let matchesTime = false;
+                    if (printPeriod === "MES") { matchesTime = dDate.getMonth() === currentMonthIdx; }
+                    else if (printPeriod === "DIA") { matchesTime = dDate.getTime() === today.getTime(); }
+                    else if (printPeriod === "SEMANA") { matchesTime = dDate >= today && dDate <= endOfWeek; }
+                    let matchesSearch = true;
+                    if (searchTerm.trim() !== "") {
+                        const term = searchTerm.toLowerCase().trim();
+                        matchesSearch = (entry.provider || "").toLowerCase().includes(term) || (entry.description || "").toLowerCase().includes(term);
+                    }
+                    if (searchTerm.trim() !== "") { return matchesType && matchesSearch; }
+                    return matchesType && matchesTime;
+                });
+            }, [rawEntries, currentMonthIdx, viewMode, searchTerm, printPeriod]);
+
+            const statsAndAgenda = useMemo(() => {
+                const today = new Date(); today.setHours(0,0,0,0);
+                const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
+                const dayAfterTomorrow = new Date(today); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
+                const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + 7);
+                let t = 0; let p = 0; let d = 0; let o = 0; let tS = 0; let tmS = 0; let wS = 0; let pS = 0;
+                rawEntries.forEach(e => {
+                    if (!e.dueDate) return;
+                    const amt = Number(e.amount || 0); const pAmt = Number(e.paidAmount || 0); const dDate = new Date(e.dueDate + "T00:00:00");
+                    if (dDate.getMonth() === currentMonthIdx && (viewMode === 'ALL' || e.type === viewMode)) { t += amt; p += pAmt; if (e.isDeductible) d += amt; }
+                    if (!e.paymentDate && (viewMode === 'ALL' || e.type === viewMode)) {
+                        if (dDate < today) o += amt; if (dDate.getTime() === today.getTime()) tS += amt;
+                        if (dDate.getTime() === tomorrow.getTime()) tmS += amt; if (dDate >= dayAfterTomorrow && dDate <= endOfWeek) wS += amt;
+                        if (dDate >= today) pS += amt;
+                    }
+                });
+                return { total: t, paid: p, deductible: d, overdue: o, todaySum: tS, tomorrowSum: tmS, weekSum: wS, pendingSum: pS };
+            }, [rawEntries, currentMonthIdx, viewMode]);
+
+            const getEntryStatus = (entry) => {
+                if (entry.paymentDate) return { bg: 'bg-emerald-50', color: 'text-emerald-600', label: 'Liquidado', border: 'border-emerald-100' };
+                const diffDays = Math.ceil((new Date(entry.dueDate + "T00:00:00").getTime() - new Date().setHours(0,0,0,0)) / UmDiaMili);
+                if (diffDays < 0) return { bg: 'bg-rose-50', color: 'text-rose-600', label: 'Vencido', border: 'border-rose-200' };
+                if (diffDays <= 7) return { bg: 'bg-amber-50', color: 'text-amber-600', label: 'Na semana', border: 'border-amber-200' };
+                return { bg: 'bg-blue-50', color: 'text-blue-600', label: 'Agendado', border: 'border-blue-100' };
+            };
+
+            const sortedEntries = useMemo(() => {
+                let items = [...filteredEntries];
+                if (sortConfig.key) {
+                    items.sort((a, b) => {
+                        let valA = a[sortConfig.key] || ''; let valB = b[sortConfig.key] || '';
+                        if (sortConfig.key === 'amount') { valA = Number(valA); valB = Number(valB); }
+                        if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+                        if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+                        return 0;
+                    });
+                }
+                return items;
+            }, [filteredEntries, sortConfig]);
+
+            const saveEntry = async () => {
+                if (!currentUser || !db || !formData.provider || !formData.amount || !formData.dueDate) { alert("Preencha os campos obrigatorios."); return; }
+                const entriesCol = db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries');
+                try {
+                    if (editingId) {
+                        await entriesCol.doc(editingId).update({ provider: formData.provider, description: formData.description, amount: Number(formData.amount), dueDate: formData.dueDate, category: formData.category, type: formData.type, nature: formData.nature, isCritical: formData.isCritical, isDeductible: formData.isDeductible });
+                        setEditingId(null);
+                    } else {
+                        const iterations = formData.isRecurring ? 12 : Number(formData.totalInstallments);
+                        for (let i = 0; i < iterations; i++) {
+                            const baseDate = new Date(formData.dueDate + "T00:00:00"); baseDate.setMonth(baseDate.getMonth() + i);
+                            await entriesCol.add({ ...formData, amount: Number(formData.amount), dueDate: baseDate.toISOString().split('T')[0], paymentDate: "", paidAmount: 0, installment: i + 1, totalInstallments: iterations, createdAt: new Date().toISOString() });
+                        }
+                    }
+                    setIsModalOpen(false); setSuggestions([]);
+                    setFormData({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", totalInstallments: 1, type: "PJ", isCritical: false, isRecurring: false, nature: "Fixa", isDeductible: false });
+                } catch (err) { alert("Erro de rede."); }
+            };
+
+            const startEdit = (entry) => {
+                setEditingId(entry.id); setIsModalOpen(true);
+                setFormData({ provider: entry.provider, description: entry.description || "", amount: entry.amount, dueDate: entry.dueDate, category: entry.category || "Outros", totalInstallments: entry.totalInstallments || 1, type: entry.type || "PJ", isCritical: entry.isCritical || false, isRecurring: entry.isRecurring || false, nature: entry.nature || "Fixa", isDeductible: entry.isDeductible || false });
+            };
+
+            const togglePaymentStatus = async (id, currentStatus) => {
+                if (!currentUser || !db) return;
+                try {
+                    const entry = rawEntries.find(e => e.id === id);
+                    await db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries').doc(id).update({ paymentDate: currentStatus ? "" : new Date().toISOString().split('T')[0], paidAmount: currentStatus ? 0 : entry.amount });
+                } catch (err) { console.error(err); }
+            };
+
+            const removeEntry = async (id) => {
+                if (!currentUser || !db || !window.confirm("Remover do fluxo?")) return;
+                try { await db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries').doc(id).delete(); } catch (err) { console.error(err); }
+            };
+
+            if (setupError) return <div class="min-h-screen bg-slate-50 flex items-center justify-center p-6"><div class="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center"><h2 class="text-xl font-black text-rose-600 mb-2">Bloqueio Protetor</h2><p class="text-slate-600 font-medium text-sm">{setupError}</p></div></div>;
+            if (isLoading) return <div class="min-h-screen bg-slate-50 flex items-center justify-center"><p class="text-slate-500 font-bold uppercase text-xs animate-pulse">Carregando Nuvem...</p></div>;
+
+            return (
+                <div className="min-h-screen bg-slate-50 pb-24">
+                    <nav className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40 shadow-sm no-print">
+                        <div className="max-w-6xl mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+                            <div className="flex items-center gap-4">
+                                <div className="bg-slate-900 p-2.5 rounded-xl text-white"><i className="ph-bold ph-chart-line-up text-2xl"></i></div>
+                                <div><h1 className="text-xl font-black text-slate-900 uppercase">Fluxo Ferreira Nunes</h1><p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest">Nuvem Pronta</p></div>
+                            </div>
+                            <div className="flex bg-slate-100 p-1.5 rounded-2xl w-full md:w-auto">
+                                <button onClick={() => setViewMode('ALL')} className={btnNav + (viewMode === 'ALL' ? 'bg-white text-slate-900 shadow-md' : 'text-slate-400')}>Geral</button>
+                                <button onClick={() => setViewMode('PJ')} className={btnNav + (viewMode === 'PJ' ? 'bg-white text-blue-600 shadow-md' : 'text-slate-400')}>PJ</button>
+                                <button onClick={() => setViewMode('PF')} className={btnNav + (viewMode === 'PF' ? 'bg-white text-purple-600 shadow-md' : 'text-slate-400')}>PF</button>
+                            </div>
+                        </div>
+                    </nav>
+                    <main className="max-w-6xl mx-auto p-4 md:p-8 print-area">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-8 no-print">
+                            <div className={miniCd}><span className={mTitle + " text-amber-600"}>Pagamentos Hoje</span><p className={mValue}>R$ {statsAndAgenda.todaySum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className={miniCd}><span className={mTitle + " text-blue-600"}>Amanhã</span><p className={mValue}>R$ {statsAndAgenda.tomorrowSum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className={miniCd}><span className={mTitle + " text-purple-600"}>Na Semana</span><p className={mValue}>R$ {statsAndAgenda.weekSum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className={miniCd}><span className={mTitle + " text-slate-500"}>A Vencer total</span><p className={mValue}>R$ {statsAndAgenda.pendingSum.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8 no-print">
+                            <div className={cardBs + "border-l-slate-900"}><span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Compromissos</span><p className={txtBig}>R$ {statsAndAgenda.total.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className={cardBs + "border-l-rose-500"}><span className="text-[10px] text-rose-600 font-black uppercase tracking-widest">Vencido</span><p className={txtRed}>R$ {statsAndAgenda.overdue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className={cardBs + "border-l-emerald-500"}><span className="text-[10px] text-emerald-600 font-black uppercase tracking-widest">Dedutivel</span><p className={txtGrn}>R$ {statsAndAgenda.deductible.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                            <div className="bg-slate-900 p-6 rounded-3xl shadow-xl text-white border-l-4 border-l-emerald-400"><span className="text-[10px] text-emerald-400 font-black uppercase tracking-widest">Liquidado</span><p className={txtWht}>R$ {statsAndAgenda.paid.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p></div>
+                        </div>
+                        <div className="mb-6 no-print relative">
+                            <span className="absolute inset-y-0 left-0 flex items-center pl-4 text-slate-400"><i className="ph-bold ph-magnifying-glass text-xl"></i></span>
+                            <input type="text" placeholder="DIGITE O NOME DO FORNECEDOR OU DETALHE DA CONTA PARA ENCONTRAR INSTANTANEAMENTE..." className="w-full pl-12 pr-5 py-4 bg-white border border-slate-200 rounded-2xl outline-none font-black text-slate-800 focus:border-slate-400 transition-all shadow-sm uppercase placeholder-slate-400 text-sm" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            {searchTerm.trim() !== "" && (<button onClick={() => setSearchTerm("")} className="absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400 hover:text-rose-500 font-black uppercase text-xs">Limpar Busca</button>)}
+                        </div>
+                        <div className="flex items-center justify-between bg-white border border-slate-200 p-2.5 rounded-3xl mb-8 no-print shadow-sm">
+                            <button onClick={() => setCurrentMonthIdx(prev => prev > 0 ? prev - 1 : 11)} className="p-3 text-slate-400 hover:text-slate-900"><i className="ph-bold ph-caret-left text-xl"></i></button>
+                            <span className="text-xl font-black uppercase">{searchTerm.trim() !== "" ? "Busca Histórica Geral" : monthName + " 2026"}</span>
+                            <button onClick={() => setCurrentMonthIdx(prev => prev < 11 ? prev + 1 : 0)} className="p-3 text-slate-400 hover:text-slate-900"><i className="ph-bold ph-caret-right text-xl"></i></button>
+                        </div>
+
+                        <div className="hidden print:block mb-8 border-b-2 border-slate-900 pb-4">
+                            <h2 className="text-2xl font-black uppercase tracking-tight text-slate-900">Relatório de Fluxo Financeiro</h2>
+                            <p className="text-xs font-bold text-slate-500 uppercase mt-1">Filtro Temporal: Período [{printPeriod}] | Escopo: [{viewMode === 'ALL' ? 'PF E PJ CONJUNTOS' : viewMode}]</p>
+                            <p className="text-xs font-bold text-slate-400 uppercase">Emissão: {new Date().toLocaleDateString('pt-BR')}</p>
+                        </div>
+
+                        <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden print-table-container">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse min-w-[700px]">
+                                    <thead>
+                                        <tr className="bg-slate-50 border-b border-slate-100">
+                                            <th className="p-6 text-[10px] font-black text-slate-400 uppercase">Status</th>
+                                            <th className="p-6 text-[10px] font-black text-slate-400 uppercase cursor-pointer" onClick={() => setSortConfig({ key: 'provider', direction: sortConfig.direction === 'asc' ? 'desc' : 'asc' })}>Fornecedor</th>
+                                            <th className="p-6 text-[10px] font-black text-slate-400 uppercase">Classificacao</th>
+                                            <th className="p-6 text-[10px] font-black text-slate-400 uppercase text-right">Valor</th>
+                                            <th className="p-6 text-center text-[10px] font-black text-slate-400 uppercase no-print">Acoes</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-50">
+                                        {sortedEntries.length === 0 ? (<tr><td colSpan="5" className="p-20 text-center text-slate-300 text-xs font-bold uppercase tracking-widest">Nenhum lançamento corresponde aos filtros atuais</td></tr>) : (
+                                            sortedEntries.map((entry) => {
+                                                const status = getEntryStatus(entry);
+                                                return (
+                                                    <tr key={entry.id} className={entry.paymentDate ? 'bg-slate-50/50 opacity-60 print:opacity-100' : ''}>
+                                                        <td className={tdCls}><span className={"inline-flex px-3 py-1 rounded-full text-[9px] font-black uppercase border " + status.bg + " " + status.color + " " + status.border}>{status.label}</span></td>
+                                                        <td className={tdCls}><div className="flex items-center gap-3"><span className={"text-[10px] font-black px-2.5 py-1 rounded text-white print:text-slate-900 print:bg-slate-100 " + (entry.type === 'PJ' ? 'bg-blue-600' : 'bg-purple-600')}>{entry.type}</span><div><p className="font-black text-slate-900">{entry.provider}</p><p className="text-[11px] text-slate-400 font-bold uppercase">{entry.description}</p></div></div></td>
+                                                        <td className={tdCls}><div className="flex flex-col gap-1.5"><div className="flex items-center gap-2"><span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 border px-2 py-0.5 rounded">{entry.nature}</span><span className="text-[9px] font-black uppercase bg-slate-900 text-white px-2 py-0.5 rounded print:text-slate-900 print:bg-slate-100 print:border">{entry.category}</span></div><div className="flex items-center gap-1.5 text-slate-500 text-[11px] font-bold"><i className="ph-bold ph-calendar-blank"></i>{new Date(entry.dueDate + "T00:00:00").toLocaleDateString('pt-BR')}</div></div></td>
+                                                        <td className={"text-right font-black text-slate-900 " + tdCls}>R$ {Number(entry.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</td>
+                                                        <td className={"no-print " + tdCls}><div className="flex items-center justify-center gap-2"><button onClick={() => togglePaymentStatus(entry.id, !!entry.paymentDate)} className={"p-2 rounded-xl transition-all " + (entry.paymentDate ? 'text-amber-600 bg-amber-50' : 'bg-emerald-500 text-white')}>{entry.paymentDate ? <i className="ph-fill ph-x-circle text-lg"></i> : <i className="ph-fill ph-check-circle text-lg"></i>}</button><button onClick={() => startEdit(entry)} className="p-2 bg-blue-50 text-blue-600 rounded-xl"><i className="ph-bold ph-pencil-simple text-lg"></i></button><button onClick={() => removeEntry(entry.id)} className="p-2 bg-rose-50 text-rose-500 rounded-xl"><i className="ph-bold ph-trash text-lg"></i></button></div></td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </main>
+                    <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
+                    <div className="fixed bottom-6 right-6 flex flex-col gap-4 z-50 no-print items-end">
+                        <div className="bg-white border border-slate-200 p-2 rounded-2xl shadow-2xl flex flex-col gap-1.5">
+                            <span className="text-[8px] font-black uppercase text-slate-400 px-2 tracking-widest">Janela de Impressão</span>
+                            <div className="flex gap-1 bg-slate-50 p-1 rounded-xl">
+                                <button onClick={() => setPrintPeriod("MES")} className={"px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all " + (printPeriod === "MES" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400")}>Mês</button>
+                                <button onClick={() => setPrintPeriod("SEMANA")} className={"px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all " + (printPeriod === "SEMANA" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400")}>Semana</button>
+                                <button onClick={() => setPrintPeriod("DIA")} className={"px-3 py-1.5 rounded-lg text-[9px] font-black uppercase transition-all " + (printPeriod === "DIA" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400")}>Hoje</button>
+                            </div>
+                            <button onClick={() => window.print()} className="w-full bg-slate-900 hover:bg-slate-800 text-white py-2 rounded-xl flex items-center justify-center gap-2 font-black text-[9px] uppercase tracking-wider transition-all"><i className="ph-bold ph-printer text-xs"></i> Imprimir Filtrado</button>
+                        </div>
+                        <div className="flex gap-4">
+                            <button onClick={() => { setEditingId(null); fileInputRef.current.click(); }} className="w-16 h-16 bg-emerald-600 text-white rounded-2xl shadow-xl flex items-center justify-center hover:scale-105 transition-all"><i className="ph-bold ph-microsoft-excel-logo text-2xl"></i></button>
+                            <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="w-16 h-16 bg-slate-900 text-white rounded-2xl shadow-xl flex items-center justify-center hover:scale-105 transition-all"><i className="ph-bold ph-plus text-2xl"></i></button>
+                        </div>
+                    </div>
+                    {isModalOpen && (
+                        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
+                            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden">
+                                <div className="p-8 bg-slate-50 border-b border-slate-100 flex justify-between items-center"><h2 className="text-2xl font-black text-slate-900 uppercase">{editingId ? "Editar" : "Novo"}</h2><button onClick={() => setIsModalOpen(false)} className="p-2 text-slate-400 hover:text-slate-600"><i className="ph-fill ph-x-circle text-3xl"></i></button></div>
+                                <div className="p-8 space-y-6 max-h-[65vh] overflow-y-auto">
+                                    <div className="flex gap-3 bg-slate-100 p-2 rounded-2xl">
+                                        <button onClick={() => setFormData({...formData, type: "PJ"})} className={"flex-1 py-3 rounded-xl text-[11px] font-black uppercase " + (formData.type === "PJ" ? 'bg-white text-blue-600 shadow-md' : 'text-slate-500')}>PJ</button>
+                                        <button onClick={() => setFormData({...formData, type: "PF"})} className={"flex-1 py-3 rounded-xl text-[11px] font-black uppercase " + (formData.type === "PF" ? 'bg-white text-purple-600 shadow-md' : 'text-slate-500')}>PF</button>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="md:col-span-2 relative">
+                                            <label className={lblCls}>Fornecedor *</label>
+                                            <input type="text" className={inpCls} value={formData.provider} onChange={e => handleProviderChange(e.target.value)} />
+                                            {suggestions.length > 0 && (
+                                                <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl z-50 max-h-48 overflow-y-auto divide-y divide-slate-100">
+                                                    {suggestions.map(entry => (
+                                                        <div key={entry.id} onClick={() => selectSuggestion(entry)} className="p-4 hover:bg-slate-50 cursor-pointer flex justify-between items-center transition-all">
+                                                            <div><span className="font-black text-slate-900 text-sm">{entry.provider}</span><span className="text-xs text-slate-400 block uppercase font-bold">{entry.category} - {entry.description}</span></div>
+                                                            <span className="text-xs font-black text-slate-500 bg-slate-100 px-2 py-1 rounded">R$ {entry.amount}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="md:col-span-2"><label className={lblCls}>Descricao</label><input type="text" className={inpCls} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
+                                        <div><label className={lblCls}>Valor *</label><input type="number" className={inpCls} value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /></div>
+                                        <div><label className={lblCls}>Vencimento *</label><input type="date" className={inpCls} value={formData.dueDate} onChange={e => setFormData({...formData, dueDate: e.target.value})} /></div>
+                                        <div><label className={lblCls}>Natureza</label><select className={inpCls} value={formData.nature} onChange={e => setFormData({...formData, nature: e.target.value})}><option value="Fixa">Fixa</option><option value="Variável">Variável</option></select></div>
+                                        <div><label className={lblCls}>Categoria</label><select className={inpCls} value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>{CATEGORY_LIST.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
+                                        {!editingId && (
+                                            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <label className={chkCls + (formData.isDeductible ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isDeductible} onChange={e => setFormData({...formData, isDeductible: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Dedutivel</span></label>
+                                                <label className={chkCls + (formData.isRecurring ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isRecurring} onChange={e => setFormData({...formData, isRecurring: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Recorrente (12M)</span></label>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="p-8 bg-slate-50 border-t border-slate-100 flex gap-4"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-4 bg-white border border-slate-200 rounded-xl text-slate-600 font-black uppercase text-[11px]">Cancelar</button><button onClick={saveEntry} className="flex-[2] py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-[11px] shadow-lg">Salvar</button></div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
