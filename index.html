@@ -72,7 +72,7 @@
             const [sortConfig, setSortConfig] = useState({ key: 'dueDate', direction: 'asc' });
             const [isLoading, setIsLoading] = useState(true); const [setupError, setSetupError] = useState("");
             const fileInputRef = useRef(null);
-            const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", currentInstallment: 1, totalInstallments: 1, type: "PJ", isCritical: false, nature: "Fixa", isDeductible: false });
+            const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", currentInstallment: 1, totalInstallments: 1, type: "PF", isCritical: false, nature: "Fixa", isDeductible: false });
             const [suggestions, setSuggestions] = useState([]); const monthName = MONTH_NAMES[currentMonthIdx];
             const [searchTerm, setSearchTerm] = useState("");
             const [printPeriod, setPrintPeriod] = useState("MES");
