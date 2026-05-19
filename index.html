@@ -75,13 +75,10 @@
             const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", currentInstallment: 1, totalInstallments: 1, type: "PJ", isCritical: false, nature: "Fixa", isDeductible: false });
             const [suggestions, setSuggestions] = useState([]); const monthName = MONTH_NAMES[currentMonthIdx];
             const [searchTerm, setSearchTerm] = useState("");
-            
-            // ESTADOS DE FILTRAGEM AVANÇADA DA JANELA DE IMPRESSÃO
             const [printPeriod, setPrintPeriod] = useState("MES");
-            const [statusFilter, setStatusFilter] = useState("ALL"); // ALL, PAID, PENDING
-            const [categoryFilter, setCategoryFilter] = useState("ALL"); // ALL ou Categoria Específica
-            const [deductibleOnly, setDeductibleOnly] = useState(false); // true ou false
-
+            const [statusFilter, setStatusFilter] = useState("ALL");
+            const [categoryFilter, setCategoryFilter] = useState("ALL");
+            const [deductibleOnly, setDeductibleOnly] = useState(false);
             useEffect(() => {
                 if (!auth) { setSetupError("Erro na conexão com a nuvem."); setIsLoading(false); return; }
                 auth.signInAnonymously().catch(() => { setSetupError("Erro de autenticação segura."); setIsLoading(false); });
@@ -159,53 +156,37 @@
                 };
                 reader.readAsBinaryString(file);
             };
-
-            // MOTOR INTEGRADO DE INTELIGÊNCIA FINANCEIRA DE FILTRAGEM MULTI-CRITÉRIO
             const filteredEntries = useMemo(() => {
                 const today = new Date(); today.setHours(0,0,0,0);
                 const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + 7);
                 return rawEntries.filter(entry => {
                     if (!entry.dueDate) return false;
                     const dDate = new Date(entry.dueDate + "T00:00:00");
-                    
-                    // 1. Escopo Superior (Geral, PJ ou PF)
                     const matchesType = (viewMode === 'ALL' || entry.type === viewMode);
-                    
-                    // 2. Filtro Temporal Dinâmico
                     let matchesTime = false;
                     if (printPeriod === "MES") { matchesTime = dDate.getMonth() === currentMonthIdx; }
                     else if (printPeriod === "DIA") { matchesTime = dDate.getTime() === today.getTime(); }
                     else if (printPeriod === "SEMANA") { matchesTime = dDate >= today && dDate <= endOfWeek; }
-                    
-                    // 3. Filtro Avançado por Situação de Pagamento (Pagas ou Pendentes)
                     let matchesStatus = true;
                     if (statusFilter === "PAID") { matchesStatus = !!entry.paymentDate; }
                     else if (statusFilter === "PENDING") { matchesStatus = !entry.paymentDate; }
-
-                    // 4. Filtro por Categoria de Despesa (Ex: Impostos)
                     const matchesCategory = (categoryFilter === "ALL" || entry.category === categoryFilter);
-
-                    // 5. Filtro Exclusivo Contábil (Apenas Dedutíveis)
                     const matchesDeductible = (!deductibleOnly || !!entry.isDeductible);
-
-                    // 6. Barra de Busca de Texto Direta
                     let matchesSearch = true;
                     if (searchTerm.trim() !== "") {
                         const term = searchTerm.toLowerCase().trim();
                         matchesSearch = (entry.provider || "").toLowerCase().includes(term) || (entry.description || "").toLowerCase().includes(term);
                     }
-
                     if (searchTerm.trim() !== "") { return matchesType && matchesSearch; }
                     return matchesType && matchesTime && matchesStatus && matchesCategory && matchesDeductible;
                 });
             }, [rawEntries, currentMonthIdx, viewMode, searchTerm, printPeriod, statusFilter, categoryFilter, deductibleOnly]);
-
             const statsAndAgenda = useMemo(() => {
                 const today = new Date(); today.setHours(0,0,0,0);
                 const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
                 const dayAfterTomorrow = new Date(today); dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
                 const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + 7);
-                let t = 0; let p = 0; let d = 0; let o = 0; let tS = 0; tmS = 0; let wS = 0; let pS = 0;
+                let t = 0; let p = 0; let d = 0; let o = 0; let tS = 0; let tmS = 0; let wS = 0; let pS = 0;
                 rawEntries.forEach(e => {
                     if (!e.dueDate) return;
                     const amt = Number(e.amount || 0); const pAmt = Number(e.paidAmount || 0); const dDate = new Date(e.dueDate + "T00:00:00");
@@ -218,7 +199,6 @@
                 });
                 return { total: t, paid: p, deductible: d, overdue: o, todaySum: tS, tomorrowSum: tmS, weekSum: wS, pendingSum: pS };
             }, [rawEntries, currentMonthIdx, viewMode]);
-
             const getEntryStatus = (entry) => {
                 if (entry.paymentDate) return { bg: 'bg-emerald-50', color: 'text-emerald-600', label: 'Liquidado', border: 'border-emerald-100' };
                 const diffDays = Math.ceil((new Date(entry.dueDate + "T00:00:00").getTime() - new Date().setHours(0,0,0,0)) / UmDiaMili);
@@ -315,20 +295,11 @@
                             <span className="text-xl font-black uppercase">{searchTerm.trim() !== "" ? "Busca Histórica" : monthName + " 2026"}</span>
                             <button onClick={() => setCurrentMonthIdx(prev => prev < 11 ? prev + 1 : 0)} className="p-3 text-slate-400 hover:text-slate-900"><i className="ph-bold ph-caret-right text-xl"></i></button>
                         </div>
-                        
-                        {/* CABEÇALHO DA FOLHA DE IMPRESSÃO - ATUALIZA DINAMICAMENTE COM O QUE FOI ESCOLHIDO */}
                         <div className="hidden print:block mb-8 border-b-2 border-slate-900 pb-4">
                             <h2 className="text-2xl font-black uppercase text-slate-900">Relatório de Fluxo Financeiro</h2>
-                            <p className="text-xs font-bold text-slate-600 uppercase mt-1">
-                                Período: {monthName} de 2026 | Escopo Geral: [{viewMode === 'ALL' ? 'PF E PJ JUNTOS' : viewMode}]
-                            </p>
-                            <p className="text-xs font-bold text-slate-500 uppercase">
-                                Filtros Aplicados: Situação [{statusFilter === 'ALL' ? 'TODAS AS CONTAS' : statusFilter === 'PAID' ? 'APENAS LIQUIDADOS' : 'APENAS PENDENTES'}] 
-                                | Categoria: [{categoryFilter === 'ALL' ? 'TODAS AS CATEGORIAS' : categoryFilter}] 
-                                | Contábil: [{deductibleOnly ? 'APENAS DEDUTÍVEIS IR' : 'GERAL'}]
-                            </p>
+                            <p className="text-xs font-bold text-slate-600 uppercase mt-1">Período: {monthName} de 2026 | Escopo Geral: [{viewMode === 'ALL' ? 'PF E PJ JUNTOS' : viewMode}]</p>
+                            <p className="text-xs font-bold text-slate-500 uppercase">Filtros Aplicados: Situação [{statusFilter === 'ALL' ? 'TODAS AS CONTAS' : statusFilter === 'PAID' ? 'APENAS LIQUIDADOS' : 'APENAS PENDENTES'}] | Categoria: [{categoryFilter === 'ALL' ? 'TODAS AS CATEGORIAS' : categoryFilter}] | Contábil: [{deductibleOnly ? 'APENAS DEDUTÍVEIS IR' : 'GERAL'}]</p>
                         </div>
-
                         <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden print-table-container">
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left border-collapse min-w-[700px]">
@@ -342,7 +313,7 @@
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-50">
-                                        {sortedEntries.length === 0 ? (<tr><td colSpan="5" className="p-20 text-center text-slate-300 text-xs font-bold uppercase">Nenhum lançamento corresponde aos filtros de visualização selecionados</td></tr>) : (
+                                        {sortedEntries.length === 0 ? (<tr><td colSpan="5" className="p-20 text-center text-slate-300 text-xs font-bold uppercase">Nenhum lançamento encontrado</td></tr>) : (
                                             sortedEntries.map((entry) => {
                                                 const status = getEntryStatus(entry);
                                                 return (
@@ -362,15 +333,9 @@
                         </div>
                     </main>
                     <input type="file" accept=".xlsx, .xls, .csv" ref={fileInputRef} style={{ display: 'none' }} onChange={handleFileUpload} />
-                    
-                    {/* BARRA DE IMPRESSÃO E MATRIZ DE FILTROS TOTALMENTE INTEGRADA NO RODAPÉ */}
                     <div className="fixed bottom-0 left-0 right-0 bg-slate-900 border-t border-slate-800 shadow-[0_-10px_40px_rgba(0,0,0,0.2)] p-4 z-50 no-print text-white">
                         <div className="max-w-6xl mx-auto flex flex-col lg:flex-row items-center justify-between gap-4">
-                            
-                            {/* LINHA DE FILTROS AVANÇADOS DA MATRIZ DE IMPRESSÃO */}
                             <div className="flex flex-wrap items-center gap-4 w-full lg:w-auto">
-                                
-                                {/* 1. Seletor Temporal */}
                                 <div className="flex flex-col gap-1">
                                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Janela</span>
                                     <div className="flex bg-slate-800 p-1 rounded-xl gap-0.5">
@@ -379,8 +344,6 @@
                                         <button onClick={() => setPrintPeriod("DIA")} className={"px-3 py-1.5 rounded-lg text-[10px] font-black uppercase " + (printPeriod === "DIA" ? "bg-white text-slate-900 shadow-sm" : "text-slate-400")}>Hoje</button>
                                     </div>
                                 </div>
-
-                                {/* 2. Seletor Contábil / Situação */}
                                 <div className="flex flex-col gap-1">
                                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Situação Financeira</span>
                                     <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="bg-slate-800 text-white rounded-xl px-3 py-2 text-[10px] font-black uppercase border border-slate-700 outline-none h-9">
@@ -389,8 +352,6 @@
                                         <option value="PENDING">Apenas as Pendentes</option>
                                     </select>
                                 </div>
-
-                                {/* 3. Seletor por Categorias Dinâmicas (Ex: Impostos) */}
                                 <div className="flex flex-col gap-1">
                                     <span className="text-[8px] font-black uppercase text-slate-400 tracking-wider">Filtrar Categoria</span>
                                     <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="bg-slate-800 text-white rounded-xl px-3 py-2 text-[10px] font-black uppercase border border-slate-700 outline-none h-9 max-w-[160px]">
@@ -398,31 +359,22 @@
                                         {CATEGORY_LIST.map(cat => <option key={cat} value={cat}>{cat}</option>)}
                                     </select>
                                 </div>
-
-                                {/* 4. Caixinha de Seleção Dedutível */}
                                 <div className="flex flex-col gap-1 pt-4">
                                     <label className={"flex items-center gap-2 px-3 h-9 rounded-xl border border-slate-700 cursor-pointer transition-all " + (deductibleOnly ? 'bg-emerald-600/20 border-emerald-500' : 'bg-slate-800')}>
                                         <input type="checkbox" checked={deductibleOnly} onChange={(e) => setDeductibleOnly(e.target.checked)} className="w-4 h-4 rounded text-emerald-600 bg-slate-900 border-slate-700" />
                                         <span className="text-[10px] font-black uppercase tracking-wider">Apenas IR</span>
                                     </label>
                                 </div>
-
-                                {/* Botão de Impressão Direta */}
                                 <div className="flex flex-col gap-1 pt-4">
                                     <button onClick={() => window.print()} className="bg-white text-slate-900 px-4 h-9 rounded-xl flex items-center gap-2 font-black text-[10px] uppercase tracking-wider hover:bg-slate-100 transition-all shadow-md"><i className="ph-bold ph-printer text-sm"></i>Imprimir Lista</button>
                                 </div>
-
                             </div>
-
-                            {/* BOTÕES COMPLEMENTARES DA CLÍNICA */}
                             <div className="flex items-center gap-3 w-full lg:w-auto justify-end pt-2 lg:pt-0 border-t border-slate-800 lg:border-t-0">
-                                <button onClick={() => { setEditingId(null); fileInputRef.current.click(); }} className="h-11 px-4 bg-slate-800 text-slate-300 border border-slate-700 rounded-xl flex items-center justify-center gap-2 font-black text-[10px] uppercase tracking-wider hover:bg-slate-700 transition-all"><i className="ph-bold ph-microsoft-excel-logo text-base"></i> Subir Planilha</button>
+                                <button onClick={() => { setEditingId(null); fileInputRef.current.click(); }} className="h-11 px-4 bg-slate-800 text-slate-300 border border-slate-700 rounded-xl flex items-center justify-center gap-2 font-black text-[10px] uppercase tracking-wider transition-all"><i className="ph-bold ph-microsoft-excel-logo text-base"></i> Subir Planilha</button>
                                 <button onClick={() => { setEditingId(null); setIsModalOpen(true); }} className="h-11 px-5 bg-emerald-600 text-white rounded-xl flex items-center justify-center gap-2 font-black text-[10px] uppercase tracking-wider hover:bg-emerald-500 transition-all shadow-lg"><i className="ph-bold ph-plus text-base"></i> Nova Despesa</button>
                             </div>
-
                         </div>
                     </div>
-
                     {isModalOpen && (
                         <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-[100]">
                             <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden text-slate-900">
@@ -452,14 +404,12 @@
                                         <div><label className={lblCls}>Vencimento Inicial *</label><input type="date" className={inpCls} value={formData.dueDate} onChange={e => setFormData({...formData, dueDate: e.target.value})} /></div>
                                         <div><label className={lblCls}>Natureza</label><select className={inpCls} value={formData.nature} onChange={e => setFormData({...formData, nature: e.target.value})}><option value="Fixa">Fixa</option><option value="Variável">Variável</option></select></div>
                                         <div><label className={lblCls}>Categoria</label><select className={inpCls} value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>{CATEGORY_LIST.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
-                                        
                                         {!editingId && (
                                             <>
                                                 <div><label className={lblCls}>Parcela Atual</label><input type="number" className={inpCls} min="1" value={formData.currentInstallment} onChange={e => setFormData({...formData, currentInstallment: Number(e.target.value)})} /></div>
                                                 <div><label className={lblCls}>Total de Parcelas</label><input type="number" className={inpCls} min="1" value={formData.totalInstallments} onChange={e => setFormData({...formData, totalInstallments: Number(e.target.value)})} /></div>
                                             </>
                                         )}
-
                                         <div className="md:col-span-2 grid grid-cols-1 gap-4">
                                             <label className={chkCls + (formData.isDeductible ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isDeductible} onChange={e => setFormData({...formData, isDeductible: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Dedutivel</span></label>
                                         </div>
