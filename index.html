@@ -72,7 +72,7 @@
             const [sortConfig, setSortConfig] = useState({ key: 'dueDate', direction: 'asc' });
             const [isLoading, setIsLoading] = useState(true); const [setupError, setSetupError] = useState("");
             const fileInputRef = useRef(null);
-            const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", totalInstallments: 1, type: "PJ", isCritical: false, isRecurring: false, nature: "Fixa", isDeductible: false });
+            const [formData, setFormData] = useState({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", currentInstallment: 1, totalInstallments: 1, type: "PJ", isCritical: false, nature: "Fixa", isDeductible: false });
             const [suggestions, setSuggestions] = useState([]); const monthName = MONTH_NAMES[currentMonthIdx];
             const [searchTerm, setSearchTerm] = useState("");
             const [printPeriod, setPrintPeriod] = useState("MES");
@@ -219,19 +219,23 @@
                         await entriesCol.doc(editingId).update({ provider: formData.provider, description: formData.description, amount: Number(formData.amount), dueDate: formData.dueDate, category: formData.category, type: formData.type, nature: formData.nature, isCritical: formData.isCritical, isDeductible: formData.isDeductible });
                         setEditingId(null);
                     } else {
-                        const iterations = formData.isRecurring ? 12 : Number(formData.totalInstallments);
-                        for (let i = 0; i < iterations; i++) {
+                        const totalParc = Number(formData.totalInstallments) || 1;
+                        const parcAtual = Number(formData.currentInstallment) || 1;
+                        const numLancamentos = totalParc - parcAtual + 1;
+                        for (let i = 0; i < numLancamentos; i++) {
+                            const numParcelaPrint = parcAtual + i;
                             const baseDate = new Date(formData.dueDate + "T00:00:00"); baseDate.setMonth(baseDate.getMonth() + i);
-                            await entriesCol.add({ ...formData, amount: Number(formData.amount), dueDate: baseDate.toISOString().split('T')[0], paymentDate: "", paidAmount: 0, installment: i + 1, totalInstallments: iterations, createdAt: new Date().toISOString() });
+                            const labelDesc = totalParc > 1 ? `[Parcela ${numParcelaPrint}/${totalParc}] ${formData.description}`.trim() : formData.description;
+                            await entriesCol.add({ provider: formData.provider, description: labelDesc, amount: Number(formData.amount), dueDate: baseDate.toISOString().split('T')[0], category: formData.category, type: formData.type, nature: formData.nature, isCritical: formData.isCritical, isDeductible: formData.isDeductible, paymentDate: "", paidAmount: 0, installment: numParcelaPrint, totalInstallments: totalParc, createdAt: new Date().toISOString() });
                         }
                     }
                     setIsModalOpen(false); setSuggestions([]);
-                    setFormData({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", totalInstallments: 1, type: "PJ", isCritical: false, isRecurring: false, nature: "Fixa", isDeductible: false });
+                    setFormData({ provider: "", description: "", amount: "", dueDate: "", category: "Outros", currentInstallment: 1, totalInstallments: 1, type: "PJ", isCritical: false, nature: "Fixa", isDeductible: false });
                 } catch (err) { alert("Erro ao gravar dados."); }
             };
             const startEdit = (entry) => {
                 setEditingId(entry.id); setIsModalOpen(true);
-                setFormData({ provider: entry.provider, description: entry.description || "", amount: entry.amount, dueDate: entry.dueDate, category: entry.category || "Outros", totalInstallments: entry.totalInstallments || 1, type: entry.type || "PJ", isCritical: entry.isCritical || false, isRecurring: entry.isRecurring || false, nature: entry.nature || "Fixa", isDeductible: entry.isDeductible || false });
+                setFormData({ provider: entry.provider, description: entry.description || "", amount: entry.amount, dueDate: entry.dueDate, category: entry.category || "Outros", currentInstallment: entry.installment || 1, totalInstallments: entry.totalInstallments || 1, type: entry.type || "PJ", isCritical: entry.isCritical || false, nature: entry.nature || "Fixa", isDeductible: entry.isDeductible || false });
             };
             const togglePaymentStatus = async (id, currentStatus) => {
                 if (!currentUser || !db) return;
@@ -361,15 +365,20 @@
                                         </div>
                                         <div className="md:col-span-2"><label className={lblCls}>Descricao</label><input type="text" className={inpCls} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} /></div>
                                         <div><label className={lblCls}>Valor *</label><input type="number" className={inpCls} value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} /></div>
-                                        <div><label className={lblCls}>Vencimento *</label><input type="date" className={inpCls} value={formData.dueDate} onChange={e => setFormData({...formData, dueDate: e.target.value})} /></div>
+                                        <div><label className={lblCls}>Vencimento Inicial *</label><input type="date" className={inpCls} value={formData.dueDate} onChange={e => setFormData({...formData, dueDate: e.target.value})} /></div>
                                         <div><label className={lblCls}>Natureza</label><select className={inpCls} value={formData.nature} onChange={e => setFormData({...formData, nature: e.target.value})}><option value="Fixa">Fixa</option><option value="Variável">Variável</option></select></div>
                                         <div><label className={lblCls}>Categoria</label><select className={inpCls} value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>{CATEGORY_LIST.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select></div>
+                                        
                                         {!editingId && (
-                                            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                <label className={chkCls + (formData.isDeductible ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isDeductible} onChange={e => setFormData({...formData, isDeductible: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Dedutivel</span></label>
-                                                <label className={chkCls + (formData.isRecurring ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isRecurring} onChange={e => setFormData({...formData, isRecurring: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Recorrente (12M)</span></label>
-                                            </div>
+                                            <>
+                                                <div><label className={lblCls}>Parcela Atual</label><input type="number" className={inpCls} min="1" value={formData.currentInstallment} onChange={e => setFormData({...formData, currentInstallment: Number(e.target.value)})} /></div>
+                                                <div><label className={lblCls}>Total de Parcelas</label><input type="number" className={inpCls} min="1" value={formData.totalInstallments} onChange={e => setFormData({...formData, totalInstallments: Number(e.target.value)})} /></div>
+                                            </>
                                         )}
+
+                                        <div className="md:col-span-2 grid grid-cols-1 gap-4">
+                                            <label className={chkCls + (formData.isDeductible ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-100')}><input type="checkbox" className="w-5 h-5 rounded" checked={formData.isDeductible} onChange={e => setFormData({...formData, isDeductible: e.target.checked})} /><span className="text-[11px] font-black uppercase text-slate-900">Dedutivel</span></label>
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="p-8 bg-slate-50 border-t border-slate-100 flex gap-4"><button onClick={() => setIsModalOpen(false)} className="flex-1 py-4 bg-white border border-slate-200 rounded-xl text-slate-600 font-black uppercase text-[11px]">Cancelar</button><button onClick={saveEntry} className="flex-[2] py-4 bg-slate-900 text-white rounded-xl font-black uppercase text-[11px] shadow-lg">Salvar</button></div>
