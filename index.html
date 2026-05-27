@@ -104,9 +104,11 @@
                 setSuggestions(matched.slice(0, 5));
             };
             const selectSuggestion = (entry) => {
-                setFormData(prev => ({ ...prev, provider: entry.provider, description: entry.description || "", amount: entry.amount || "", category: entry.category || "Outros", nature: entry.nature || "Fixa", type: entry.type || "PJ", isDeductible: entry.isDeductible || false }));
+                setFormData(prev => ({ ...prev, provider: entry.provider, description: entry.description || "", amount: entry.amount || "", category: entry.category || "Outros", nature: entry.nature || "Fixa", type: entry.type || "PF", isDeductible: entry.isDeductible || false }));
                 setSuggestions([]);
             };
+
+            // NOVO MOTOR ULTRA-TOLERANTE CONTRA RETRABALHO DE ARQUIVOS
             const handleFileUpload = (e) => {
                 const file = e.target.files[0]; if (!file) return;
                 setIsLoading(true); const reader = new FileReader();
@@ -115,47 +117,55 @@
                         const wb = XLSX.read(evt.target.result, { type: 'binary', cellDates: true });
                         const entriesCol = db.collection('artifacts').doc(currentAppId).collection('public').doc('data').collection('financeiro_entries');
                         for (let sheetName of wb.SheetNames) {
-                            const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { raw: false });
-                            for (let row of rows) {
-                                const getRowVal = (keys) => {
-                                    const foundKey = Object.keys(row).find(k => keys.some(key => k.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().includes(key)));
-                                    return foundKey ? row[foundKey] : null;
-                                };
-                                let provider = getRowVal(['fornecedor', 'historico', 'beneficiario', 'nome']);
-                                let amountStr = getRowVal(['valor da parcela', 'valor', 'quantia', 'total']);
-                                let dateStr = getRowVal(['data de vencimento', 'vencimento', 'data', 'dia']);
-                                let desc = getRowVal(['descricao', 'detalhe', 'item']) || "Importado";
-                                let pfPj = getRowVal(['pf/pj', 'tipo']) || "PJ";
-                                let nature = getRowVal(['natureza', 'custo']) || "Fixa";
-                                let category = getRowVal(['categoria']) || "Outros";
-                                let statusStr = getRowVal(['status', 'situacao', 'pago', 'data efetiva']) || "Aberto";
-                                if (!provider || !amountStr || !dateStr) continue;
-                                let amount = Number(String(amountStr).replace(/[^0-9.-]/g, "").replace(",", "."));
-                                if (isNaN(amount) || amount === 0) { amount = Number(String(amountStr).replace("R$", "").trim().replace(/\./g, "").replace(",", ".")); }
+                            const arr = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { header: 1, raw: false });
+                            for (let row of arr) {
+                                if (!row || row.length < 2) continue;
+                                
+                                // Mapeamento posicional inteligente se não houver cabeçalhos explícitos
+                                let provider = String(row[0] || "").trim();
+                                let dateStr = String(row[1] || "").trim();
+                                let amountStr = String(row[2] || "").trim();
+                                let statusStr = String(row[3] || "").trim();
+
+                                // Previsão de linhas de título do Word (Ex: "CHECK LIST - PF", "DENTAIS") -> Descarta sem quebrar
+                                if (!amountStr || provider.toLowerCase().includes("check list") || provider.toLowerCase() === "dentais" || provider.toLowerCase() === "outras") continue;
+
+                                let amount = Number(amountStr.replace(/[^0-9.-]/g, "").replace(",", "."));
+                                if (isNaN(amount) || amount === 0) { amount = Number(amountStr.replace("R$", "").trim().replace(/\./g, "").replace(",", ".")); }
                                 if (isNaN(amount) || amount === 0) continue;
+
                                 let dueDate = new Date().toISOString().split('T')[0];
-                                if (dateStr) {
-                                    if (String(dateStr).includes('/')) {
-                                        const parts = String(dateStr).split('/');
-                                        if (parts.length === 3) {
-                                            let year = parts[2].trim(); if(year.length === 2) year = "20" + year;
-                                            dueDate = year + "-" + parts[1].trim().padStart(2, '0') + "-" + parts[0].trim().padStart(2, '0');
+                                if (dateStr && dateStr !== "-") {
+                                    if (dateStr.includes('/')) {
+                                        const parts = dateStr.split('/');
+                                        if (parts.length >= 2) {
+                                            let day = parts[0].trim().padStart(2, '0');
+                                            let month = parts[1].trim().padStart(2, '0');
+                                            let year = parts[2] ? parts[2].trim() : "2026";
+                                            if(year.length === 2) year = "20" + year;
+                                            dueDate = `${year}-${month}-${day}`;
                                         }
-                                    } else { const d = new Date(dateStr); if (!isNaN(d.getTime())) dueDate = d.toISOString().split('T')[0]; }
+                                    }
                                 }
-                                let cleanType = String(pfPj).toUpperCase().includes("PF") ? "PF" : "PJ";
-                                let cleanNature = (String(nature).includes("Var") || String(nature).includes("var")) ? "Variável" : "Fixa";
-                                let cleanCategory = CATEGORY_LIST.includes(category) ? category : "Outros";
-                                const nStatus = String(statusStr).toLowerCase().normalize("NFD").trim();
-                                let isPaid = (nStatus !== "" && nStatus !== "aberto" && nStatus !== "-");
-                                await entriesCol.add({ provider: String(provider).trim(), description: String(desc).trim(), amount: Math.abs(amount), dueDate: dueDate, category: cleanCategory, nature: cleanNature, type: cleanType, paymentDate: isPaid ? dueDate : "", paidAmount: isPaid ? Math.abs(amount) : 0, installment: 1, totalInstallments: 1, isCritical: false, isDeductible: false, createdAt: new Date().toISOString() });
+
+                                // Classificação inteligente baseada no nome
+                                let category = "Outros";
+                                let lowerProv = provider.toLowerCase();
+                                if (lowerProv.includes("dental") || lowerProv.includes("kika") || lowerProv.includes("neodent") || lowerProv.includes("mour")) category = "Insumos/Dental";
+                                if (lowerProv.includes("protetico") || lowerProv.includes("diego") || lowerProv.includes("valkelia")) category = "Laboratório";
+                                if (lowerProv.includes("imposto") || lowerProv.includes("carne") || lowerProv.includes("iptu") || lowerProv.includes("prefeitura")) category = "Impostos/Taxas";
+
+                                let isPaid = statusStr.toUpperCase().includes("PAGO") || statusStr.toUpperCase().includes("DEBITO");
+
+                                await entriesCol.add({ provider: provider, description: "Importado via Lista", amount: Math.abs(amount), dueDate: dueDate, category: category, nature: "Fixa", type: viewMode === "ALL" ? "PF" : viewMode, paymentDate: isPaid ? dueDate : "", paidAmount: isPaid ? Math.abs(amount) : 0, installment: 1, totalInstallments: 1, isCritical: false, isDeductible: false, createdAt: new Date().toISOString() });
                             }
                         }
-                    } catch (error) { alert("Erro de leitura na planilha."); }
+                    } catch (error) { alert("Erro ao interpretar dados do arquivo."); }
                     setIsLoading(false); e.target.value = null;
                 };
                 reader.readAsBinaryString(file);
             };
+
             const filteredEntries = useMemo(() => {
                 const today = new Date(); today.setHours(0,0,0,0);
                 const endOfWeek = new Date(today); endOfWeek.setDate(endOfWeek.getDate() + 7);
@@ -243,7 +253,7 @@
             };
             const startEdit = (entry) => {
                 setEditingId(entry.id); setIsModalOpen(true);
-                setFormData({ provider: entry.provider, description: entry.description || "", amount: entry.amount, dueDate: entry.dueDate, category: entry.category || "Outros", currentInstallment: entry.installment || 1, totalInstallments: entry.totalInstallments || 1, type: entry.type || "PJ", isCritical: entry.isCritical || false, nature: entry.nature || "Fixa", isDeductible: entry.isDeductible || false });
+                setFormData({ provider: entry.provider, description: entry.description || "", amount: entry.amount, dueDate: entry.dueDate, category: entry.category || "Outros", currentInstallment: entry.installment || 1, totalInstallments: entry.totalInstallments || 1, type: entry.type || "PF", isCritical: entry.isCritical || false, nature: entry.nature || "Fixa", isDeductible: entry.isDeductible || false });
             };
             const togglePaymentStatus = async (id, currentStatus) => {
                 if (!currentUser || !db) return;
@@ -422,7 +432,7 @@
                 </div>
             );
         };
-        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+        ReactDOM.createRoot(document.getElementById('root')).render((<App />));
     </script>
 </body>
 </html>
